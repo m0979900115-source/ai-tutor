@@ -43,27 +43,27 @@ img_file = st.camera_input("Зроби фото завдання")
 user_text = st.text_input("Що саме викликає труднощі?", placeholder="Наприклад: 'Не розумію, як це додати'")
 
 if img_file:
+    from PIL import Image
+
+if img_file:
     with st.spinner('Репетитор уважно розглядає зошит...'):
-        # Підготовка картинки
-        img_data = img_file.getvalue()
-        image_parts = [{"mime_type": "image/jpeg", "data": img_data}]
+        # Конвертуємо завантажений файл у формат, який розуміє ШІ
+        img = Image.open(img_file)
         
-        # Запит до Gemini
-        prompt_parts = [system_instruction, user_text if user_text else "Допоможи розібратися з цим завданням", image_parts[0]]
-        response = model.generate_content(prompt_parts)
+        # Запит до Gemini (передаємо об'єкт PIL прямо)
+        prompt_parts = [system_instruction, user_text if user_text else "Допоможи розібратися", img]
         
-        # Виведення результату
-        st.info("💡 Порада вчителя:")
-        st.write(response.text)
-        
-        # ГЕНЕРАЦІЯ ГОЛОСУ
         try:
+            response = model.generate_content(prompt_parts)
+            
+            st.info("💡 Порада вчителя:")
+            st.write(response.text)
+            
+            # Озвучка
             tts = gTTS(text=response.text, lang='uk')
             audio_buffer = io.BytesIO()
             tts.write_to_fp(audio_buffer)
             st.audio(audio_buffer, format='audio/mp3')
+            
         except Exception as e:
-            st.error("Тимчасова помилка озвучки, але текст вище!")
-
-st.markdown("---")
-st.caption("Порада: щоб ШІ краще бачив текст, тримайте телефон рівно над зошитом.")
+            st.error(f"Помилка моделі: {str(e)}")
