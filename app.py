@@ -9,8 +9,8 @@ import io
 API_KEY = "AQ.Ab8RN6LzzJdGJ759IPA37uhSLJUSQ-ciE6AoISavDHFFLVqLCQ"
 genai.configure(api_key=API_KEY)
 
-# Використовуємо повну назву моделі з префіксом models/ та суфіксом -latest
-model = genai.GenerativeModel(model_name="models/gemini-1.5-flash-latest")
+# Використовуємо повну назву моделі з префіксом models/ та суфіксом -preview
+model = genai.GenerativeModel('gemini-3-flash-preview')
 
 # Конфігурація сторінки
 st.set_page_config(page_title="ШІ-Репетитор", page_icon="🎓", layout="centered")
