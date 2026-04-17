@@ -3,7 +3,7 @@ import google.generativeai as genai
 from gtts import gTTS
 from PIL import Image
 import io
-import os
+import base64
 
 # 1. БЕЗПЕЧНЕ НАЛАШТУВАННЯ
 try:
@@ -39,23 +39,27 @@ if img_file or audio_question or user_text:
             
             st.info(answer)
             
-            # --- НОВИЙ СПОСІБ ОЗВУЧКИ (ЧЕРЕЗ ТИМЧАСОВИЙ ФАЙЛ) ---
+            # --- НОВИЙ МЕТОД: BASE64 (Найбільш сумісний з мобільними) ---
             try:
                 tts = gTTS(text=answer, lang='uk')
-                # Зберігаємо у тимчасовий файл
-                tts.save("response.mp3")
+                fp = io.BytesIO()
+                tts.write_to_fp(fp)
+                fp.seek(0)
                 
-                # Читаємо файл назад для відтворення
-                with open("response.mp3", "rb") as f:
-                    audio_bytes = f.read()
+                # Кодуємо звук у текст (Base64)
+                audio_base64 = base64.b64encode(fp.read()).decode()
                 
-                st.audio(audio_bytes, format='audio/mp3', autoplay=True)
+                # Створюємо HTML-плеєр, який браузер точно зрозуміє
+                audio_html = f"""
+                    <audio autoplay="true" controls>
+                        <source src="data:audio/mp3;base64,{audio_base64}" type="audio/mp3">
+                    </audio>
+                """
+                st.markdown(audio_html, unsafe_allow_html=True)
                 
-                # Видаляємо файл після використання (опціонально)
-                os.remove("response.mp3")
             except Exception as e_audio:
-                st.warning("Помилка створення аудіо. Спробуйте оновити сторінку.")
-            # ----------------------------------------------------
+                st.warning("Голос не зміг завантажитися, але текст вище!")
+            # ---------------------------------------------------------
             
         except Exception as e:
             st.error(f"Помилка: {str(e)}")
