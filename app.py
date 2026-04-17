@@ -3,31 +3,67 @@ import google.generativeai as genai
 from gtts import gTTS
 import io
 
-# Налаштування Gemini
-genai.configure(api_key="AQ.Ab8RN6LzzJdGJ759IPA37uhSLJUSQ-ciE6AoISavDHFFLVqLCQ")
-model = genai.GenerativeModel('gemini-1.5-flash')
+# 1. НАЛАШТУВАННЯ (Ваш ключ тепер у лапках, помилки NameError не буде)
+API_KEY = "AQ.Ab8RN6LzzJdGJ759IPA37uhSLJUSQ-ciE6AoISavDHFFLVqLCQ"
+genai.configure(api_key=API_KEY)
 
-st.set_page_config(page_title="ШІ-Репетитор", page_icon="🎓")
+# Налаштування моделі
+generation_config = {
+  "temperature": 0.7,
+  "top_p": 0.95,
+  "top_k": 40,
+  "max_output_tokens": 2048,
+}
+
+model = genai.GenerativeModel(
+  model_name="gemini-1.5-flash",
+  generation_config=generation_config,
+)
+
+# 2. ІНТЕРФЕЙС ДОДАТКА
+st.set_page_config(page_title="AI Репетитор", page_icon="🎓")
 st.title("🎓 Мій персональний репетитор")
+st.write("Сфотографуй завдання, і я допоможу розібратися!")
 
-# Інструкція для ШІ
-system_prompt = "Ти — професійний репетитор. Твоє завдання: допомогти учню знайти помилку самостійно. Якщо на фото математика — перевір розрахунки. Якщо мова — перевір граматику. НІКОЛИ не пиши готову відповідь відразу. Став навідні запитання. Використовуй емодзі та підбадьорюй дитину. Спілкуйся виключно українською.".
+# Інструкція для ШІ (System Prompt)
+system_instruction = """
+Ти — професійний і терплячий репетитор. 
+Твоя мета: допомогти учню зрозуміти матеріал самостійно.
+ПРАВИЛА:
+1. Ніколи не давай готову відповідь відразу.
+2. Якщо на фото задача, перевір хід думок учня.
+3. Став навідні запитання (метод Сократа).
+4. Використовуй просту мову, зрозумілу дитині.
+5. Хвали за старання!
+6. СПІЛКУЙСЯ ВИКЛЮЧНО УКРАЇНСЬКОЮ МОВОЮ.
+"""
 
-# Камера
-img_file = st.camera_input("Сфотографуй завдання або сторінку")
+# 3. ФУНКЦІОНАЛ (Камера та текст)
+img_file = st.camera_input("Зроби фото завдання")
+user_text = st.text_input("Що саме викликає труднощі?", placeholder="Наприклад: 'Не розумію, як це додати'")
 
-# Текст
-user_question = st.text_input("Що саме тут незрозуміло?", placeholder="Наприклад: як розв'язати це рівняння?")
-
-if img_file and user_question:
-    with st.spinner('Репетитор думає...'):
-        img = {"mime_type": "image/jpeg", "data": img_file.getvalue()}
-        response = model.generate_content([system_prompt, user_question, img])
+if img_file:
+    with st.spinner('Репетитор уважно розглядає зошит...'):
+        # Підготовка картинки
+        img_data = img_file.getvalue()
+        image_parts = [{"mime_type": "image/jpeg", "data": img_data}]
         
-        st.markdown(f"### Порада вчителя:\n{response.text}")
+        # Запит до Gemini
+        prompt_parts = [system_instruction, user_text if user_text else "Допоможи розібратися з цим завданням", image_parts[0]]
+        response = model.generate_content(prompt_parts)
         
-        # Генерація голосу
-        tts = gTTS(text=response.text, lang='uk')
-        fp = io.BytesIO()
-        tts.write_to_fp(fp)
-        st.audio(fp, format='audio/mp3')
+        # Виведення результату
+        st.info("💡 Порада вчителя:")
+        st.write(response.text)
+        
+        # ГЕНЕРАЦІЯ ГОЛОСУ
+        try:
+            tts = gTTS(text=response.text, lang='uk')
+            audio_buffer = io.BytesIO()
+            tts.write_to_fp(audio_buffer)
+            st.audio(audio_buffer, format='audio/mp3')
+        except Exception as e:
+            st.error("Тимчасова помилка озвучки, але текст вище!")
+
+st.markdown("---")
+st.caption("Порада: щоб ШІ краще бачив текст, тримайте телефон рівно над зошитом.")
