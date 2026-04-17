@@ -8,10 +8,9 @@ import base64
 # 1. КОНФІГУРАЦІЯ
 try:
     genai.configure(api_key=st.secrets["GEMINI_KEY"])
-    # Створюємо клієнт ElevenLabs з новим ключем
     el_client = ElevenLabs(api_key=st.secrets["ELEVENLABS_KEY"])
 except Exception as e:
-    st.error("Помилка секретів у Streamlit!")
+    st.error("Помилка ключів! Перевірте вкладку Secrets.")
     st.stop()
 
 model = genai.GenerativeModel('gemini-3-flash-preview')
@@ -43,10 +42,11 @@ if img_file or audio_question or user_text:
             
             # --- ОЗВУЧКА ---
             try:
-                # Використовуємо Multilingual модель для кращої української
+                # Використовуємо голос 'Rachel' (ID: 21m00Tcm4TlvDq8ikWAM)
+                # Він є стандартним для всіх акаунтів ElevenLabs
                 audio_stream = el_client.text_to_speech.convert(
                     text=answer,
-                    voice_id="N2lVS1wzexD6kS831tgZ", # Приємний голос (Jarvis/Ukrainian-friendly)
+                    voice_id="21m00Tcm4TlvDq8ikWAM", 
                     model_id="eleven_multilingual_v2",
                     output_format="mp3_44100_128"
                 )
