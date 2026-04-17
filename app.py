@@ -8,20 +8,18 @@ import base64
 # 1. КОНФІГУРАЦІЯ
 try:
     genai.configure(api_key=st.secrets["GEMINI_KEY"])
-    # Створюємо клієнт ElevenLabs
+    # Створюємо клієнт ElevenLabs з новим ключем
     el_client = ElevenLabs(api_key=st.secrets["ELEVENLABS_KEY"])
 except Exception as e:
-    st.error("Помилка секретів! Перевірте GEMINI_KEY та ELEVENLABS_KEY у налаштуваннях Streamlit.")
+    st.error("Помилка секретів у Streamlit!")
     st.stop()
 
 model = genai.GenerativeModel('gemini-3-flash-preview')
 
 st.set_page_config(page_title="AI Tutor Pro", page_icon="🎓")
-st.title("🎓 Твій реалістичний репетитор")
+st.title("🎓 Твій живий репетитор")
 
-SYSTEM_PROMPT = """Ти — професійний і дружній репетитор. 
-Твоя мета: допомогти учню розібратися в темі через запитання, а не просто дати відповідь.
-Спілкуйся виключно українською мовою. Будь емоційним, хвали дитину!"""
+SYSTEM_PROMPT = "Ти — професійний репетитор. Допомагай учню зрозуміти завдання через запитання. Спілкуйся виключно українською."
 
 # 2. ВХІДНІ ДАНІ
 img_file = st.camera_input("📸 Фото завдання")
@@ -30,35 +28,29 @@ user_text = st.text_input("💬 Твоє питання")
 
 # 3. ЛОГІКА
 if img_file or audio_question or user_text:
-    with st.spinner('Репетитор обмірковує відповідь...'):
+    with st.spinner('Репетитор думає...'):
         try:
             content = [SYSTEM_PROMPT]
-            if user_text: content.append(f"Питання учня: {user_text}")
+            if user_text: content.append(user_text)
             if audio_question:
-                content.append({
-                    "mime_type": "audio/wav",
-                    "data": audio_question.getvalue()
-                })
+                content.append({"mime_type": "audio/wav", "data": audio_question.getvalue()})
             if img_file:
                 content.append(Image.open(img_file))
             
-            # Отримуємо текст від Gemini
             response = model.generate_content(content)
             answer = response.text
-            
             st.info(answer)
             
-            # --- ВИПРАВЛЕНА ОЗВУЧКА ELEVENLABS ---
+            # --- ОЗВУЧКА ---
             try:
-                # ВАЖЛИВО: Використовуємо el_client.generate (правильний синтаксис)
+                # Використовуємо Multilingual модель для кращої української
                 audio_stream = el_client.text_to_speech.convert(
                     text=answer,
-                    voice_id="pNInz6obpg8n9YZZ9NpS", # Це ID голосу 'Adam', він добре працює
+                    voice_id="N2lVS1wzexD6kS831tgZ", # Приємний голос (Jarvis/Ukrainian-friendly)
                     model_id="eleven_multilingual_v2",
                     output_format="mp3_44100_128"
                 )
                 
-                # Перетворюємо генератор в байти
                 audio_bytes = b"".join(audio_stream)
                 audio_base64 = base64.b64encode(audio_bytes).decode()
                 
@@ -71,7 +63,6 @@ if img_file or audio_question or user_text:
                 
             except Exception as e_audio:
                 st.warning(f"Деталі помилки голосу: {str(e_audio)}")
-                st.info("Підказка: Перевірте, чи не закінчився ліміт символів на ElevenLabs.")
             
         except Exception as e:
             st.error(f"Помилка Gemini: {str(e)}")
