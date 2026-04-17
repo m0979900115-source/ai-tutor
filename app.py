@@ -4,7 +4,7 @@ from gtts import gTTS
 import io
 
 # Налаштування Gemini
-genai.configure(api_key=AQ.Ab8RN6LzzJdGJ759IPA37uhSLJUSQ-ciE6AoISavDHFFLVqLCQ)
+genai.configure(api_key="AQ.Ab8RN6LzzJdGJ759IPA37uhSLJUSQ-ciE6AoISavDHFFLVqLCQ")
 model = genai.GenerativeModel('gemini-1.5-flash')
 
 st.set_page_config(page_title="ШІ-Репетитор", page_icon="🎓")
