@@ -1,24 +1,26 @@
 import streamlit as st
 import google.generativeai as genai
-from gtts import gTTS
+from elevenlabs.client import ElevenLabs
 from PIL import Image
 import io
 import base64
 
-# 1. БЕЗПЕЧНЕ НАЛАШТУВАННЯ
+# 1. НАЛАШТУВАННЯ
 try:
-    API_KEY = st.secrets["GEMINI_KEY"]
-    genai.configure(api_key=API_KEY)
-except Exception:
-    st.error("Налаштуйте GEMINI_KEY у Secrets!")
+    genai.configure(api_key=st.secrets["GEMINI_KEY"])
+    client = ElevenLabs(api_key=st.secrets["ELEVENLABS_KEY"])
+except Exception as e:
+    st.error("Перевірте ключі GEMINI_KEY та ELEVENLABS_KEY у Secrets!")
     st.stop()
 
 model = genai.GenerativeModel('gemini-3-flash-preview')
 
-st.set_page_config(page_title="AI Tutor 3.0", page_icon="🎓")
-st.title("🎓 Мій персональний репетитор")
+st.set_page_config(page_title="AI Tutor Pro", page_icon="🎓")
+st.title("🎓 Твій реалістичний репетитор")
 
-SYSTEM_PROMPT = "Ти — крутий репетитор. Допоможи учню зрозуміти завдання. Не давай відповідь одразу, став навідні запитання. Спілкуйся українською."
+SYSTEM_PROMPT = """Ти — професійний репетитор з дуже живим голосом. 
+Твоя мова має бути природною. Не давай відповідь одразу, допомагай учню думати. 
+Використовуй емодзі. Спілкуйся виключно українською."""
 
 # 2. ВВІД
 img_file = st.camera_input("📸 Фото завдання")
@@ -27,7 +29,7 @@ user_text = st.text_input("💬 Твоє питання")
 
 # 3. ЛОГІКА
 if img_file or audio_question or user_text:
-    with st.spinner('Думаю...'):
+    with st.spinner('Репетитор обмірковує відповідь...'):
         try:
             content = [SYSTEM_PROMPT]
             if user_text: content.append(user_text)
@@ -39,27 +41,28 @@ if img_file or audio_question or user_text:
             
             st.info(answer)
             
-            # --- НОВИЙ МЕТОД: BASE64 (Найбільш сумісний з мобільними) ---
+            # --- РЕАЛІСТИЧНА ОЗВУЧКА (ElevenLabs) ---
             try:
-                tts = gTTS(text=answer, lang='uk')
-                fp = io.BytesIO()
-                tts.write_to_fp(fp)
-                fp.seek(0)
+                # Генеруємо аудіо (використовуємо модель Multilingual v2)
+                audio = client.generate(
+                    text=answer,
+                    voice="Oleksandr", # Можна змінити на "Dmitro" або "Natalia"
+                    model="eleven_multilingual_v2"
+                )
                 
-                # Кодуємо звук у текст (Base64)
-                audio_base64 = base64.b64encode(fp.read()).decode()
+                # Збираємо аудіо в байти
+                audio_bytes = b"".join(list(audio))
+                audio_base64 = base64.b64encode(audio_bytes).decode()
                 
-                # Створюємо HTML-плеєр, який браузер точно зрозуміє
                 audio_html = f"""
-                    <audio autoplay="true" controls>
+                    <audio autoplay="true" controls style="width: 100%;">
                         <source src="data:audio/mp3;base64,{audio_base64}" type="audio/mp3">
                     </audio>
                 """
                 st.markdown(audio_html, unsafe_allow_html=True)
                 
             except Exception as e_audio:
-                st.warning("Голос не зміг завантажитися, але текст вище!")
-            # ---------------------------------------------------------
+                st.warning(f"Помилка озвучки: {e_audio}")
             
         except Exception as e:
             st.error(f"Помилка: {str(e)}")
