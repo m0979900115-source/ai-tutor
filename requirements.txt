@@ -1,4 +1,5 @@
 streamlit
 google-generativeai
-Pillow
 edge-tts
+nest_asyncio
+Pillow
