@@ -1,98 +1,69 @@
 import streamlit as st
-import google.generativeai as genai
+from groq import Groq
 import edge_tts
 import asyncio
 import base64
-from PIL import Image
 
-# 1. Спрощена конфігурація
+# ── Конфігурація Groq ────────────────────────────────────────
 try:
-    genai.configure(api_key=st.secrets["GEMINI_KEY"])
-    # Використовуємо коротку назву моделі, яку система знає за замовчуванням
-    model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    st.error(f"Помилка конфігурації: {e}")
+    client = Groq(api_key=st.secrets["GROQ_KEY"])
+except Exception:
+    st.error("Додайте GROQ_KEY у Secrets!")
     st.stop()
 
-# 2. Озвучка (Edge-TTS) - стабільна та безкоштовна
+# ── Озвучка (Безкоштовна, без лімітів) ────────────────────────
 async def _tts(text):
-    try:
-        communicate = edge_tts.Communicate(text, "uk-UA-PolinaNeural")
-        audio_data = b""
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_data += chunk["data"]
-        return audio_data
-    except:
-        return None
+    communicate = edge_tts.Communicate(text, "uk-UA-PolinaNeural")
+    data = b""
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio": data += chunk["data"]
+    return data
 
 def speak(text):
-    audio_bytes = asyncio.run(_tts(text))
-    if audio_bytes:
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        audio_bytes = loop.run_until_complete(_tts(text))
         b64 = base64.b64encode(audio_bytes).decode()
         st.markdown(f'<audio autoplay src="data:audio/mp3;base64,{b64}"></audio>', unsafe_allow_html=True)
+    except: pass
 
-# 3. Історія чату
+# ── Стан сесії ────────────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "chat_session" not in st.session_state:
-    st.session_state.chat_session = model.start_chat(history=[])
 
-st.title("🎓 Твій репетитор")
+st.title("🚀 Швидкий Репетитор (Groq)")
 
-# Відображення повідомлень
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        if msg.get("image"):
-            st.image(msg["image"], width=250)
-        st.write(msg["text"])
+# Відображення чату
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]):
+        st.write(m["content"])
 
-st.divider()
+# ── Ввід ──────────────────────────────────────────────────────
+user_input = st.chat_input("Запитай що завгодно...")
 
-# Ввід даних
-with st.container():
-    col1, col2 = st.columns(2)
-    with col1:
-        img_input = st.camera_input("📸 Фото завдання")
-    with col2:
-        audio_input = st.audio_input("🎤 Голос")
-    
-    text_input = st.text_input("💬 Текст:")
-    send_btn = st.button("Надіслати 🚀")
+if user_input:
+    # Додаємо повідомлення користувача
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.write(user_input)
 
-if send_btn:
-    prompt_parts = []
-    current_image = None
-    
-    if img_input:
-        current_image = Image.open(img_input)
-        prompt_parts.append(current_image)
-    if text_input:
-        prompt_parts.append(text_input)
-    if audio_input:
-        prompt_parts.append({"mime_type": "audio/wav", "data": audio_input.getvalue()})
-
-    if prompt_parts:
-        # Додаємо в інтерфейс
-        st.session_state.messages.append({
-            "role": "user",
-            "text": text_input or "[Медіа-запит]",
-            "image": current_image
-        })
-        
-        try:
-            with st.spinner("Вчитель відповідає..."):
-                # Прямий запит без складних сесій для надійності
-                response = model.generate_content(prompt_parts)
-                answer = response.text
-                st.session_state.messages.append({"role": "assistant", "text": answer})
-                st.rerun()
-        except Exception as e:
-            if "429" in str(e):
-                st.error("Забагато запитів. Зачекайте 1 хвилину.")
-            else:
-                st.error(f"Помилка: {e}")
-
-# Озвучка останньої відповіді
-if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
-    speak(st.session_state.messages[-1]["text"])
+    # Запит до Groq
+    with st.chat_message("assistant"):
+        with st.spinner("Думаю миттєво..."):
+            try:
+                chat_completion = client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": "Ти професійний репетитор. Відповідай українською мовою, чітко та коротко."},
+                        *st.session_state.messages
+                    ],
+                    model="llama-3.3-70b-versatile", # Найпотужніша модель у Groq
+                )
+                response = chat_completion.choices[0].message.content
+                st.write(response)
+                st.session_state.messages.append({"role": "assistant", "content": response})
+                
+                # Озвучка
+                speak(response)
+            except Exception as e:
+                st.error(f"Помилка Groq: {e}")
