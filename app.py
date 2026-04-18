@@ -18,8 +18,7 @@ except Exception:
 SYSTEM_PROMPT = (
     "Ти — дружній та терплячий репетитор. "
     "Допомагай учню зрозуміти тему крок за кроком. "
-    "Відповідай коротко та зрозуміло. "
-    "Завжди спілкуйся українською мовою."
+    "Відповідай коротко та зрозуміло. Завжди спілкуйся українською."
 )
 
 @st.cache_resource
@@ -31,7 +30,7 @@ def load_model():
 
 model = load_model()
 
-# ── Голос (Edge-TTS) ──────────────────────────────────────────
+# ── Голос ─────────────────────────────────────────────────────
 async def _tts(text: str) -> bytes:
     communicate = edge_tts.Communicate(text, "uk-UA-PolinaNeural")
     audio_data = b""
@@ -52,100 +51,84 @@ def speak(text: str) -> None:
     except Exception as e:
         st.warning(f"Голос недоступний: {e}")
 
-# ── Транскрибація ──────────────────────────────────────────────
-def transcribe(audio_bytes: bytes) -> str:
-    try:
-        response = model.generate_content([
-            "Розпізнай мову і поверни лише текст без пояснень.",
-            {"mime_type": "audio/wav", "data": audio_bytes},
-        ])
-        return response.text.strip()
-    except Exception as e:
-        if "429" in str(e):
-            return "[Ліміт запитів вичерпано. Зачекайте 1 хвилину]"
-        return f"[Помилка розпізнавання: {e}]"
-
 # ── Стан сесії ────────────────────────────────────────────────
 if "chat" not in st.session_state:
     st.session_state.chat = model.start_chat(history=[])
-
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "last_audio_id" not in st.session_state:
-    st.session_state.last_audio_id = None
+# ── Функція відправки ─────────────────────────────────────────
+def send_message():
+    # Забираємо дані з тимчасових ключів віджетів
+    text = st.session_state.get("user_text", "")
+    img_file = st.session_state.get("user_cam", None)
+    audio_file = st.session_state.get("user_audio", None)
 
-# ── Відправка повідомлення ───────────────────────────────────
-def send_message(text: str = "", image=None, audio_bytes: bytes = None):
-    if not text and image is None and audio_bytes is None:
+    if not text and not img_file and not audio_file:
         return
 
-    display_text = text
-    if audio_bytes and not text:
-        with st.spinner("Розпізнаю голос…"):
-            display_text = transcribe(audio_bytes)
-
-    st.session_state.messages.append({
-        "role": "user",
-        "text": display_text,
-        "image": image,
-    })
-
+    # Підготовка контенту
     content = []
-    if text: content.append(text)
-    if image: content.append(image)
-    if audio_bytes:
-        content.append({"mime_type": "audio/wav", "data": audio_bytes})
+    display_msg = {"role": "user", "text": text, "image": None}
 
-    with st.spinner("Репетитор думає…"):
+    if img_file:
+        image = Image.open(img_file)
+        content.append(image)
+        display_msg["image"] = image
+    
+    if text:
+        content.append(text)
+    
+    if audio_file:
+        audio_bytes = audio_file.getvalue()
+        content.append({"mime_type": "audio/wav", "data": audio_bytes})
+        if not text:
+            display_msg["text"] = "[Голосове повідомлення]"
+
+    st.session_state.messages.append(display_msg)
+
+    # Запит до Gemini
+    with st.spinner("Репетитор думає..."):
         try:
             response = st.session_state.chat.send_message(content)
             answer = response.text
         except Exception as e:
             if "429" in str(e):
-                answer = "Ой! Я отримав забагато запитів. Зачекай хвилину і продовжимо? ☕"
+                answer = "Забагато запитів! Давай зробимо паузу на 1 хвилину. ☕"
             else:
-                answer = f"Виникла технічна помилка: {e}"
+                answer = f"Помилка: {e}"
 
-    st.session_state.messages.append({
-        "role": "assistant",
-        "text": answer,
-    })
-
+    st.session_state.messages.append({"role": "assistant", "text": answer})
     st.session_state.pending_voice = answer
+
+    # ОЧИЩЕННЯ ВВОДУ: видаляємо дані з віджетів, щоб не було циклу
+    for key in ["user_text", "user_cam", "user_audio"]:
+        if key in st.session_state:
+            del st.session_state[key]
+    
     st.rerun()
 
 # ── UI ────────────────────────────────────────────────────────
 st.title("🎓 Твій репетитор")
 
+# Чат
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         if msg.get("image") is not None:
             st.image(msg["image"], width=250)
-        if msg.get("text"):
-            st.markdown(msg["text"])
+        st.markdown(msg["text"])
 
+# Озвучка
 if "pending_voice" in st.session_state:
-    with st.chat_message("assistant"):
-        speak(st.session_state.pop("pending_voice"))
+    speak(st.session_state.pop("pending_voice"))
 
 st.divider()
-col_cam, col_audio = st.columns([1, 1])
 
-with col_cam:
-    img_file = st.camera_input("📸 Фото завдання")
+# Елементи вводу з ключами (Key) для керування станом
+col1, col2 = st.columns(2)
+with col1:
+    st.camera_input("📸 Фото", key="user_cam", on_change=send_message)
+with col2:
+    st.audio_input("🎤 Голос", key="user_audio", on_change=send_message)
 
-with col_audio:
-    audio_input = st.audio_input("🎤 Запитай голосом")
-
-if audio_input is not None:
-    audio_id = id(audio_input)
-    if audio_id != st.session_state.last_audio_id:
-        st.session_state.last_audio_id = audio_id
-        img = Image.open(img_file) if img_file else None
-        send_message(audio_bytes=audio_input.getvalue(), image=img)
-
-text_input = st.chat_input("💬 Напиши питання…")
-if text_input:
-    img = Image.open(img_file) if img_file else None
-    send_message(text=text_input, image=img)
+st.chat_input("💬 Напиши питання...", key="user_text", on_submit=send_message)
