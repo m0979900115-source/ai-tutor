@@ -53,12 +53,24 @@ def speak(text: str) -> None:
     except Exception as e:
         st.warning(f"Голос недоступний: {e}")
 
+# ── Транскрибація аудіо через Gemini ─────────────────────────
+def transcribe(audio_bytes: bytes) -> str:
+    """Розпізнає мову з аудіо і повертає текст."""
+    try:
+        transcribe_model = genai.GenerativeModel("gemini-3-flash-preview")
+        response = transcribe_model.generate_content([
+            "Розпізнай мову і поверни лише текст без жодних пояснень.",
+            {"mime_type": "audio/wav", "data": base64.b64encode(audio_bytes).decode()},
+        ])
+        return response.text.strip()
+    except Exception as e:
+        return f"[Не вдалося розпізнати: {e}]"
+
 # ── Стан сесії ────────────────────────────────────────────────
 if "chat" not in st.session_state:
     st.session_state.chat = model.start_chat(history=[])
 
 if "messages" not in st.session_state:
-    # messages = список {"role": "user"/"assistant", "text": ..., "image": ...}
     st.session_state.messages = []
 
 if "last_audio_id" not in st.session_state:
@@ -70,14 +82,20 @@ def send_message(text: str = "", image=None, audio_bytes: bytes = None):
     if not text and image is None and audio_bytes is None:
         return
 
+    # Транскрибуємо аудіо щоб показати учню його запитання
+    display_text = text
+    if audio_bytes and not text:
+        with st.spinner("Розпізнаю голос…"):
+            display_text = transcribe(audio_bytes)
+
     # Зберегти повідомлення юзера для відображення
     st.session_state.messages.append({
         "role": "user",
-        "text": text,
+        "text": display_text,
         "image": image,
     })
 
-    # Зібрати контент для Gemini
+    # Зібрати контент для Gemini (аудіо йде напряму для кращого розуміння)
     content = []
     if text:
         content.append(text)
@@ -102,7 +120,7 @@ def send_message(text: str = "", image=None, audio_bytes: bytes = None):
         "image": None,
     })
 
-    # Озвучити — зберігаємо у стані щоб програти після rerun
+    # Зберігаємо відповідь для озвучення після rerun
     st.session_state.pending_voice = answer
     st.rerun()
 
@@ -117,9 +135,11 @@ for msg in st.session_state.messages:
         if msg.get("text"):
             st.markdown(msg["text"])
 
-# Програти голос після rerun (один раз)
+# ── Голосова відповідь — одразу після історії, до елементів вводу ──
+# speak() має бути ПІСЛЯ рендеру повідомлень але ДО віджетів вводу
 if "pending_voice" in st.session_state:
-    speak(st.session_state.pop("pending_voice"))
+    with st.chat_message("assistant"):
+        speak(st.session_state.pop("pending_voice"))
 
 # ── Ввід ──────────────────────────────────────────────────────
 st.divider()
@@ -140,7 +160,7 @@ if audio_input is not None:
         image = Image.open(img_file) if img_file else None
         send_message(audio_bytes=audio_input.getvalue(), image=image)
 
-# Текстове поле — відправка по Enter (st.chat_input)
+# Текстове поле — відправка по Enter
 text_input = st.chat_input("💬 Напиши питання…")
 if text_input:
     image = Image.open(img_file) if img_file else None
