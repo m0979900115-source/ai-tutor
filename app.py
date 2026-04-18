@@ -54,7 +54,7 @@ async def generate_audio_base64(text):
     communicate = edge_tts.Communicate(
         clean_text, 
         "ru-RU-SvetlanaNeural", 
-        rate="+25%", 
+        rate="+20%", 
         pitch="+2Hz"
     )
     
