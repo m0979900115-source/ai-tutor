@@ -5,38 +5,42 @@ import asyncio
 import base64
 from PIL import Image
 
-# 1. Налаштування (використовуємо стабільну модель 1.5 Flash)
+# 1. Налаштування моделі (спробуємо найбільш універсальне ім'я)
 try:
     genai.configure(api_key=st.secrets["GEMINI_KEY"])
-    model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+    # Використовуємо 'gemini-1.5-flash-latest' для кращої сумісності
+    model = genai.GenerativeModel(model_name="gemini-1.5-flash-latest")
 except Exception:
-    st.error("Перевірте GEMINI_KEY у Secrets!")
+    st.error("Налаштуйте GEMINI_KEY у Secrets!")
     st.stop()
 
-# 2. Озвучка
+# 2. Безкоштовна озвучка без ключів (Edge-TTS)
 async def _tts(text):
     communicate = edge_tts.Communicate(text, "uk-UA-PolinaNeural")
-    data = b""
+    audio_data = b""
     async for chunk in communicate.stream():
-        if chunk["type"] == "audio": data += chunk["data"]
-    return data
+        if chunk["type"] == "audio":
+            audio_data += chunk["data"]
+    return audio_data
 
 def speak(text):
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         audio_bytes = loop.run_until_complete(_tts(text))
+        loop.close()
         b64 = base64.b64encode(audio_bytes).decode()
         st.markdown(f'<audio autoplay src="data:audio/mp3;base64,{b64}"></audio>', unsafe_allow_html=True)
-    except: pass
+    except:
+        pass
 
-# 3. Стан чату
+# 3. Стан програми
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "gemini_chat" not in st.session_state:
     st.session_state.gemini_chat = model.start_chat(history=[])
 
-st.title("🎓 Репетитор (Версія 2.0)")
+st.title("🎓 Твій вчитель (Stable)")
 
 # Відображення чату
 for m in st.session_state.chat_history:
@@ -46,35 +50,42 @@ for m in st.session_state.chat_history:
 
 st.divider()
 
-# ФОРМА — це важливо для зупинки циклів
+# ФОРМА для запобігання циклам
 with st.container():
-    c1, c2 = st.columns(2)
-    with c1: img_file = st.camera_input("📸 Фото")
-    with c2: audio_file = st.audio_input("🎤 Голос")
+    col_img, col_voice = st.columns(2)
+    with col_img:
+        img_file = st.camera_input("📸 Фото завдання")
+    with col_voice:
+        audio_file = st.audio_input("🎤 Голос")
     
-    u_text = st.text_input("💬 Твій текст:")
-    btn = st.button("Надіслати вчителю 🚀")
+    u_text = st.text_input("💬 Текст питання:")
+    btn = st.button("Надіслати 🚀")
 
 if btn:
     content = []
-    if img_file: content.append(Image.open(img_file))
-    if u_text: content.append(u_text)
-    if audio_file: content.append({"mime_type": "audio/wav", "data": audio_file.getvalue()})
+    if img_file:
+        content.append(Image.open(img_file))
+    if u_text:
+        content.append(u_text)
+    if audio_file:
+        content.append({"mime_type": "audio/wav", "data": audio_file.getvalue()})
 
     if content:
-        st.session_state.chat_history.append({"role": "user", "text": u_text or "[Запит]", "image": Image.open(img_file) if img_file else None})
+        # Зберігаємо в історію
+        st.session_state.chat_history.append({
+            "role": "user", 
+            "text": u_text or "[Голос/Фото]", 
+            "image": Image.open(img_file) if img_file else None
+        })
         
         try:
-            with st.spinner("Думаю..."):
+            with st.spinner("Вчитель думає..."):
                 resp = st.session_state.gemini_chat.send_message(content)
                 st.session_state.chat_history.append({"role": "assistant", "text": resp.text})
                 st.rerun()
         except Exception as e:
-            if "429" in str(e):
-                st.error("Google все ще блокує твій IP. Зачекай 1 годину або спробуй інший інтернет (наприклад, мобільний).")
-            else:
-                st.error(f"Помилка: {e}")
+            st.error(f"Помилка: {e}")
 
-# Озвучка останньої відповіді
+# Озвучення останньої відповіді
 if st.session_state.chat_history and st.session_state.chat_history[-1]["role"] == "assistant":
     speak(st.session_state.chat_history[-1]["text"])
