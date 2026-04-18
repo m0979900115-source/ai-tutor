@@ -5,87 +5,94 @@ import asyncio
 import base64
 from PIL import Image
 
-# 1. Налаштування моделі (спробуємо найбільш універсальне ім'я)
+# 1. Спрощена конфігурація
 try:
     genai.configure(api_key=st.secrets["GEMINI_KEY"])
-    # Використовуємо 'gemini-1.5-flash-latest' для кращої сумісності
-    model = genai.GenerativeModel(model_name="gemini-1.5-flash-latest")
-except Exception:
-    st.error("Налаштуйте GEMINI_KEY у Secrets!")
+    # Використовуємо коротку назву моделі, яку система знає за замовчуванням
+    model = genai.GenerativeModel('gemini-1.5-flash')
+except Exception as e:
+    st.error(f"Помилка конфігурації: {e}")
     st.stop()
 
-# 2. Безкоштовна озвучка без ключів (Edge-TTS)
+# 2. Озвучка (Edge-TTS) - стабільна та безкоштовна
 async def _tts(text):
-    communicate = edge_tts.Communicate(text, "uk-UA-PolinaNeural")
-    audio_data = b""
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            audio_data += chunk["data"]
-    return audio_data
+    try:
+        communicate = edge_tts.Communicate(text, "uk-UA-PolinaNeural")
+        audio_data = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_data += chunk["data"]
+        return audio_data
+    except:
+        return None
 
 def speak(text):
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        audio_bytes = loop.run_until_complete(_tts(text))
-        loop.close()
+    audio_bytes = asyncio.run(_tts(text))
+    if audio_bytes:
         b64 = base64.b64encode(audio_bytes).decode()
         st.markdown(f'<audio autoplay src="data:audio/mp3;base64,{b64}"></audio>', unsafe_allow_html=True)
-    except:
-        pass
 
-# 3. Стан програми
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "gemini_chat" not in st.session_state:
-    st.session_state.gemini_chat = model.start_chat(history=[])
+# 3. Історія чату
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "chat_session" not in st.session_state:
+    st.session_state.chat_session = model.start_chat(history=[])
 
-st.title("🎓 Твій вчитель (Stable)")
+st.title("🎓 Твій репетитор")
 
-# Відображення чату
-for m in st.session_state.chat_history:
-    with st.chat_message(m["role"]):
-        if m.get("image"): st.image(m["image"], width=200)
-        st.write(m["text"])
+# Відображення повідомлень
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        if msg.get("image"):
+            st.image(msg["image"], width=250)
+        st.write(msg["text"])
 
 st.divider()
 
-# ФОРМА для запобігання циклам
+# Ввід даних
 with st.container():
-    col_img, col_voice = st.columns(2)
-    with col_img:
-        img_file = st.camera_input("📸 Фото завдання")
-    with col_voice:
-        audio_file = st.audio_input("🎤 Голос")
+    col1, col2 = st.columns(2)
+    with col1:
+        img_input = st.camera_input("📸 Фото завдання")
+    with col2:
+        audio_input = st.audio_input("🎤 Голос")
     
-    u_text = st.text_input("💬 Текст питання:")
-    btn = st.button("Надіслати 🚀")
+    text_input = st.text_input("💬 Текст:")
+    send_btn = st.button("Надіслати 🚀")
 
-if btn:
-    content = []
-    if img_file:
-        content.append(Image.open(img_file))
-    if u_text:
-        content.append(u_text)
-    if audio_file:
-        content.append({"mime_type": "audio/wav", "data": audio_file.getvalue()})
+if send_btn:
+    prompt_parts = []
+    current_image = None
+    
+    if img_input:
+        current_image = Image.open(img_input)
+        prompt_parts.append(current_image)
+    if text_input:
+        prompt_parts.append(text_input)
+    if audio_input:
+        prompt_parts.append({"mime_type": "audio/wav", "data": audio_input.getvalue()})
 
-    if content:
-        # Зберігаємо в історію
-        st.session_state.chat_history.append({
-            "role": "user", 
-            "text": u_text or "[Голос/Фото]", 
-            "image": Image.open(img_file) if img_file else None
+    if prompt_parts:
+        # Додаємо в інтерфейс
+        st.session_state.messages.append({
+            "role": "user",
+            "text": text_input or "[Медіа-запит]",
+            "image": current_image
         })
         
         try:
-            with st.spinner("Вчитель думає..."):
-                resp = st.session_state.gemini_chat.send_message(content)
-                st.session_state.chat_history.append({"role": "assistant", "text": resp.text})
+            with st.spinner("Вчитель відповідає..."):
+                # Прямий запит без складних сесій для надійності
+                response = model.generate_content(prompt_parts)
+                answer = response.text
+                st.session_state.messages.append({"role": "assistant", "text": answer})
                 st.rerun()
         except Exception as e:
-            st.error(f"Помилка: {e}")
+            if "429" in str(e):
+                st.error("Забагато запитів. Зачекайте 1 хвилину.")
+            else:
+                st.error(f"Помилка: {e}")
 
-# Озвучення останньої відповіді
-if st.session_state.chat_history and st.session_state.chat_history[-1]["role"] == "assistant":
-    speak(st.session_state.chat_history[-1]["text"])
+# Озвучка останньої відповіді
+if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
+    speak(st.session_state.messages[-1]["text"])
