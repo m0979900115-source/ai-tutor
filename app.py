@@ -36,7 +36,7 @@ def analyze_image(image_bytes):
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Распознай текст и задание на этом фото. Отвечай на русском языке."},
+                    {"type": "text", "text": "Распознай текст и задание на этом фото. Опиши его кратко для учителя-ментора. Отвечай на русском."},
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
                 ]
             }]
@@ -45,12 +45,11 @@ def analyze_image(image_bytes):
     except Exception as e:
         return f"Ошибка зрения: {e}"
 
-# --- Улучшенная Озвучка (Живой женский голос) ---
+# --- Озвучка (Быстрый и живой женский голос) ---
 async def generate_audio_base64(text):
-    # Очистка текста от символов разметки, которые робот пытается прочитать
-    clean_text = text.replace('*', '').replace('#', '').replace('-', ' ').strip()
+    # Убираем символы разметки, чтобы голос не запинался
+    clean_text = text.replace('*', '').replace('#', '').replace('-', ' ').replace('>', ' ').strip()
     
-    # Настройки: rate="+20%" убирает медлительность, pitch="+2Hz" делает голос живее
     communicate = edge_tts.Communicate(
         clean_text, 
         "ru-RU-SvetlanaNeural", 
@@ -75,7 +74,6 @@ def speak(text):
         new_loop.close()
         
         if b64_audio:
-            # Использование HTML компонента для более стабильного автозапуска в браузере
             audio_html = f"""
                 <audio autoplay="true">
                     <source src="data:audio/mp3;base64,{b64_audio}" type="audio/mp3">
@@ -85,63 +83,73 @@ def speak(text):
     except:
         pass
 
-# --- Основной Интерфейс ---
-st.set_page_config(page_title="AI Tutor", page_icon="🎓")
-st.title("🎓 Ваш репетитор (Версия 3.0)")
+# --- Интерфейс ---
+st.set_page_config(page_title="AI Mentor", page_icon="🎓")
+st.title("🎓 Ваш наставник (Режим Ментора)")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Отображение истории чата
+# Отображение истории
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.write(m["content"])
 
 st.divider()
 
-# Панель инструментов
+# Панель ввода
 with st.container():
     col1, col2 = st.columns(2)
     with col1: 
         img_file = st.camera_input("📸 Сфотографировать задание")
     with col2: 
-        audio_file = st.audio_input("🎤 Задать вопрос голосом")
+        audio_file = st.audio_input("🎤 Спросить голосом")
     
-    u_text = st.chat_input("Или напишите вопрос здесь...")
+    u_text = st.chat_input("Напиши свой вопрос или ответ учителю...")
 
-# --- Логика обработки ---
+# --- Обработка логики ---
 if img_file or audio_file or u_text:
     final_query = ""
     display_text = ""
 
     if img_file:
-        with st.spinner("Анализирую фото..."):
+        with st.spinner("Смотрю на задание..."):
             img_desc = analyze_image(img_file.getvalue())
-            final_query += f"\n[ЗАДАНИЕ НА ФОТО]: {img_desc}\n"
-            display_text += "📷 (Фото задания отправлено) "
+            final_query += f"\n[УЧЕНИК ПОКАЗАЛ ФОТО]: {img_desc}\n"
+            display_text += "📷 (Показал фото задания) "
 
     if audio_file:
         with st.spinner("Слушаю..."):
             voice_text = transcribe_audio(audio_file.getvalue())
-            final_query += f"\n[ГОЛОСОВОЙ ВОПРОС]: {voice_text}"
-            display_text += f"🎤 Голос: {voice_text}"
+            final_query += f"\n[УЧЕНИК СПРОСИЛ ГОЛОСОМ]: {voice_text}"
+            display_text += f"🎤 {voice_text}"
             st.info(f"🎤 Распознано: {voice_text}")
 
     if u_text:
-        final_query += f"\n[ВОПРОС ТЕКСТОМ]: {u_text}"
+        final_query += f"\n[УЧЕНИК НАПИСАЛ]: {u_text}"
         display_text += u_text
 
     if final_query:
         st.session_state.messages.append({"role": "user", "content": display_text})
         
         with st.chat_message("assistant"):
-            with st.spinner("Учитель думает..."):
+            with st.spinner("Учитель думает над подсказкой..."):
                 try:
                     resp = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
                         messages=[
-                            {"role": "system", "content": "Ты добрый и быстрый учитель. Объясняй кратко и понятно на русском языке. Не используй много спецсимволов."},
-                            *st.session_state.messages,
+                            {
+                                "role": "system", 
+                                "content": """Ты — профессиональный учитель-ментор. Твоя задача — помогать ученику прийти к ответу самому.
+                                ПРАВИЛА:
+                                1. НИКОГДА не давай готовое решение или ответ сразу.
+                                2. Если ученик дает задачу, спроси, как он думает, с чего нужно начать.
+                                3. Давай только ОДНУ небольшую подсказку за раз.
+                                4. Используй наводящие вопросы (например: 'А что если мы попробуем сначала...?', 'Помнишь, как решаются такие примеры?').
+                                5. Хвали за старания и правильные мысли.
+                                6. Отвечай кратко, по-доброму и только на русском языке. Не используй сложную разметку типа таблиц или жирного текста, чтобы голос звучал чисто."""
+                            },
+                            *st.session_state.messages[:-1], # Передаем историю без последнего служебного сообщения
                             {"role": "user", "content": final_query}
                         ]
                     )
@@ -149,7 +157,6 @@ if img_file or audio_file or u_text:
                     st.write(ans)
                     st.session_state.messages.append({"role": "assistant", "content": ans})
                     
-                    # Запуск озвучки
                     speak(ans)
                 except Exception as e:
-                    st.error(f"Ошибка Groq: {e}")
+                    st.error(f"Ошибка: {e}")
