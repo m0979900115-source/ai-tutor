@@ -6,106 +6,142 @@ import base64
 from PIL import Image
 import io
 
-# --- Ініціалізація клієнта ---
-client = Groq(api_key=st.secrets["GROQ_KEY"])
+# --- Инициализация клиента Groq ---
+# Убедитесь, что GROQ_KEY добавлен в Settings -> Secrets в Streamlit Cloud
+try:
+    client = Groq(api_key=st.secrets["GROQ_KEY"])
+except Exception:
+    st.error("Ошибка: GROQ_KEY не найден в Secrets!")
+    st.stop()
 
-# --- Функція перетворення голосу в текст (Whisper) ---
+# --- Функция преобразования голоса в текст (Whisper) ---
 def transcribe_audio(audio_bytes):
     try:
-        # Створюємо віртуальний файл для Whisper
         audio_file = ("speech.wav", audio_bytes)
         transcription = client.audio.transcriptions.create(
             file=audio_file,
-            model="whisper-large-v3-turbo", # Найшвидша модель для мови
+            model="whisper-large-v3-turbo", 
             response_format="text",
-            language="uk"
+            language="ru"  # Распознаем русскую речь
         )
         return transcription
     except Exception as e:
-        return f"Помилка розпізнавання: {e}"
+        return f"Ошибка распознавания: {e}"
 
-# --- Функція аналізу фото ---
+# --- Функция анализа фото (Vision) ---
 def analyze_image(image_bytes):
     try:
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
         completion = client.chat.completions.create(
-            model="llama-3.2-11b-vision-preview",
+            model="llama-3.2-11b-vision-preview", # Модель со "зрением"
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Розпізнай текст та завдання на цьому фото. Відповідай українською."},
+                    {"type": "text", "text": "Распознай текст и задание на этом фото. Отвечай на русском языке."},
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
                 ]
             }]
         )
         return completion.choices[0].message.content
     except Exception as e:
-        return f"Помилка зору: {e}"
+        return f"Ошибка зрения: {e}"
 
-# --- Озвучка відповідей ---
+# --- Озвучка ответов (Женский голос) ---
 async def _tts(text):
-    communicate = edge_tts.Communicate(text, "uk-UA-PolinaNeural")
+    # Используем приятный женский голос Svetlana
+    communicate = edge_tts.Communicate(text, "ru-RU-SvetlanaNeural")
     data = b""
     async for chunk in communicate.stream():
-        if chunk["type"] == "audio": data += chunk["data"]
+        if chunk["type"] == "audio": 
+            data += chunk["data"]
     return data
 
 def speak(text):
-    audio_bytes = asyncio.run(_tts(text))
-    b64 = base64.b64encode(audio_bytes).decode()
-    st.markdown(f'<audio autoplay src="data:audio/mp3;base64,{b64}"></audio>', unsafe_allow_html=True)
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        audio_bytes = loop.run_until_complete(_tts(text))
+        loop.close()
+        
+        b64 = base64.b64encode(audio_bytes).decode()
+        st.markdown(
+            f'<audio autoplay src="data:audio/mp3;base64,{b64}"></audio>', 
+            unsafe_allow_html=True
+        )
+    except:
+        pass
 
-# --- Основний інтерфейс ---
-st.title("🎓 Розумний репетитор 2.0")
+# --- Интерфейс приложения ---
+st.set_page_config(page_title="Smart Tutor", page_icon="🎓")
+st.title("🎓 Ваш репетитор (Groq Edition)")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Відображення історії
+# Отображение истории чата
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.write(m["content"])
 
 st.divider()
 
+# Панель ввода
 with st.container():
     col1, col2 = st.columns(2)
-    with col1: img_file = st.camera_input("📸 Фото завдання")
-    with col2: audio_file = st.audio_input("🎤 Запитай голосом")
-    u_text = st.chat_input("Або напиши тут...")
-
-# --- Обробка запиту ---
-if img_file or audio_file or u_text:
-    user_final_text = ""
+    with col1: 
+        img_file = st.camera_input("📸 Сфотографировать задание")
+    with col2: 
+        audio_file = st.audio_input("🎤 Задать вопрос голосом")
     
+    u_text = st.chat_input("Или напишите сообщение здесь...")
+
+# --- Обработка ввода ---
+if img_file or audio_file or u_text:
+    final_query = ""
+    display_user_text = ""
+
+    # 1. Обработка изображения
     if img_file:
-        with st.spinner("Зчитую фото..."):
+        with st.spinner("Считываю информацию с фото..."):
             img_desc = analyze_image(img_file.getvalue())
-            user_final_text += f"\n[ЗАВДАННЯ З ФОТО]: {img_desc}\n"
+            final_query += f"\n[ЗАДАНИЕ НА ФОТО]: {img_desc}\n"
+            display_user_text += "📷 Отправлено фото задания. "
 
+    # 2. Обработка голоса
     if audio_file:
-        with st.spinner("Перетворюю голос у текст..."):
+        with st.spinner("Распознаю ваш голос..."):
             voice_text = transcribe_audio(audio_file.getvalue())
-            # ЦЕ ДУБЛЮВАННЯ: ми додаємо розпізнаний текст у запит
-            user_final_text += f"\n[ГОЛОСОВЕ ПИТАННЯ]: {voice_text}"
-            st.info(f"🎤 Розпізнано: {voice_text}") # Виводимо на екран для контролю
+            final_query += f"\n[ГОЛОСОВОЙ ВОПРОС]: {voice_text}"
+            display_user_text += f"🎤 Голос: {voice_text}"
+            # Синий блок для мгновенного контроля распознанного текста
+            st.info(f"🎤 Распознано: {voice_text}")
 
+    # 3. Текстовый ввод
     if u_text:
-        user_final_text += f"\n[ПИТАННЯ]: {u_text}"
+        final_query += f"\n[ВОПРОС ТЕКСТОМ]: {u_text}"
+        display_user_text += u_text
 
-    if user_final_text:
-        st.session_state.messages.append({"role": "user", "content": user_final_text})
+    if final_query:
+        # Сохраняем "чистый" текст пользователя в историю
+        st.session_state.messages.append({"role": "user", "content": display_user_text})
         
         with st.chat_message("assistant"):
-            with st.spinner("Вчитель готує відповідь..."):
-                resp = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[
-                        {"role": "system", "content": "Ти вчитель. Пояснюй задачі крок за кроком українською."},
-                        *st.session_state.messages
-                    ]
-                )
-                ans = resp.choices[0].message.content
-                st.write(ans)
-                st.session_state.messages.append({"role": "assistant", "content": ans})
-                speak(ans)
+            with st.spinner("Учитель готовит ответ..."):
+                try:
+                    # Основная модель для рассуждений
+                    resp = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[
+                            {"role": "system", "content": "Ты терпеливый и добрый учитель. Объясняй задачи пошагово, доступным языком. Отвечай всегда на русском языке."},
+                            *st.session_state.messages,
+                            {"role": "user", "content": final_query}
+                        ]
+                    )
+                    ans = resp.choices[0].message.content
+                    st.write(ans)
+                    st.session_state.messages.append({"role": "assistant", "content": ans})
+                    
+                    # Автоматическая озвучка ответа
+                    speak(ans)
+                except Exception as e:
+                    st.error(f"Произошла ошибка: {e}")
