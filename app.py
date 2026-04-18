@@ -52,17 +52,19 @@ def speak(text: str) -> None:
     except Exception as e:
         st.warning(f"Голос недоступний: {e}")
 
-# ── Транскрибація через існуючу модель ─────────────────────────
+# ── Транскрибація ──────────────────────────────────────────────
 def transcribe(audio_bytes: bytes) -> str:
     try:
-        # Передаємо сирі байти без ручного base64
+        # Передаємо байти напряму без base64 кодування
         response = model.generate_content([
-            "Розпізнай мову і поверни лише текст без жодних пояснень.",
+            "Розпізнай мову і поверни лише текст без пояснень.",
             {"mime_type": "audio/wav", "data": audio_bytes},
         ])
         return response.text.strip()
     except Exception as e:
-        return f"[Не вдалося розпізнати: {e}]"
+        if "429" in str(e):
+            return "[Ліміт запитів вичерпано. Зачекайте 1 хвилину]"
+        return f"[Помилка розпізнавання: {e}]"
 
 # ── Стан сесії ────────────────────────────────────────────────
 if "chat" not in st.session_state:
@@ -74,7 +76,7 @@ if "messages" not in st.session_state:
 if "last_audio_id" not in st.session_state:
     st.session_state.last_audio_id = None
 
-# ── Хелпер: відправити повідомлення ──────────────────────────
+# ── Відправка повідомлення ───────────────────────────────────
 def send_message(text: str = "", image=None, audio_bytes: bytes = None):
     if not text and image is None and audio_bytes is None:
         return
@@ -84,18 +86,18 @@ def send_message(text: str = "", image=None, audio_bytes: bytes = None):
         with st.spinner("Розпізнаю голос…"):
             display_text = transcribe(audio_bytes)
 
+    # Додаємо повідомлення користувача в історію
     st.session_state.messages.append({
         "role": "user",
         "text": display_text,
         "image": image,
     })
 
-    # Збираємо контент правильно для SDK
+    # Формуємо контент для Gemini
     content = []
     if text: content.append(text)
     if image: content.append(image)
     if audio_bytes:
-        # SDK само закодує ці байти
         content.append({"mime_type": "audio/wav", "data": audio_bytes})
 
     with st.spinner("Репетитор думає…"):
@@ -103,12 +105,14 @@ def send_message(text: str = "", image=None, audio_bytes: bytes = None):
             response = st.session_state.chat.send_message(content)
             answer = response.text
         except Exception as e:
-            answer = f"Виникла помилка: {e}"
+            if "429" in str(e):
+                answer = "Ой! Я отримав забагато запитів. Давай зачекаємо хвилину і продовжимо? ☕"
+            else:
+                answer = f"Виникла технічна помилка: {e}"
 
     st.session_state.messages.append({
         "role": "assistant",
         "text": answer,
-        "image": None,
     })
 
     st.session_state.pending_voice = answer
@@ -117,36 +121,8 @@ def send_message(text: str = "", image=None, audio_bytes: bytes = None):
 # ── UI ────────────────────────────────────────────────────────
 st.title("🎓 Твій репетитор")
 
+# Відображення історії
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         if msg.get("image"):
-            st.image(msg["image"], width=220)
-        if msg.get("text"):
-            st.markdown(msg["text"])
-
-if "pending_voice" in st.session_state:
-    # Використовуємо контейнер, щоб плеєр не "плив"
-    with st.chat_message("assistant"):
-        speak(st.session_state.pop("pending_voice"))
-
-st.divider()
-col_cam, col_audio = st.columns([1, 1])
-
-with col_cam:
-    img_file = st.camera_input("📸 Фото завдання")
-
-with col_audio:
-    audio_input = st.audio_input("🎤 Запитай голосом")
-
-if audio_input is not None:
-    audio_id = id(audio_input)
-    if audio_id != st.session_state.last_audio_id:
-        st.session_state.last_audio_id = audio_id
-        # Безпечне відкриття фото
-        image = Image.open(img_file) if img_file else None
-        send_message(audio_bytes=audio_input.getvalue(), image=image)
-
-text_input = st.chat_input("💬 Напиши питання…")
-if text_input:
-    image = Image.open(img_file) if img_file else None
-    send_message(text=text_input, image=image)
+            st.image(msg["image"],
