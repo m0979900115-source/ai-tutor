@@ -55,7 +55,6 @@ def speak(text: str) -> None:
 # ── Транскрибація ──────────────────────────────────────────────
 def transcribe(audio_bytes: bytes) -> str:
     try:
-        # Передаємо байти напряму без base64 кодування
         response = model.generate_content([
             "Розпізнай мову і поверни лише текст без пояснень.",
             {"mime_type": "audio/wav", "data": audio_bytes},
@@ -86,14 +85,12 @@ def send_message(text: str = "", image=None, audio_bytes: bytes = None):
         with st.spinner("Розпізнаю голос…"):
             display_text = transcribe(audio_bytes)
 
-    # Додаємо повідомлення користувача в історію
     st.session_state.messages.append({
         "role": "user",
         "text": display_text,
         "image": image,
     })
 
-    # Формуємо контент для Gemini
     content = []
     if text: content.append(text)
     if image: content.append(image)
@@ -106,7 +103,7 @@ def send_message(text: str = "", image=None, audio_bytes: bytes = None):
             answer = response.text
         except Exception as e:
             if "429" in str(e):
-                answer = "Ой! Я отримав забагато запитів. Давай зачекаємо хвилину і продовжимо? ☕"
+                answer = "Ой! Я отримав забагато запитів. Зачекай хвилину і продовжимо? ☕"
             else:
                 answer = f"Виникла технічна помилка: {e}"
 
@@ -121,8 +118,34 @@ def send_message(text: str = "", image=None, audio_bytes: bytes = None):
 # ── UI ────────────────────────────────────────────────────────
 st.title("🎓 Твій репетитор")
 
-# Відображення історії
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        if msg.get("image"):
-            st.image(msg["image"],
+        if msg.get("image") is not None:
+            st.image(msg["image"], width=250)
+        if msg.get("text"):
+            st.markdown(msg["text"])
+
+if "pending_voice" in st.session_state:
+    with st.chat_message("assistant"):
+        speak(st.session_state.pop("pending_voice"))
+
+st.divider()
+col_cam, col_audio = st.columns([1, 1])
+
+with col_cam:
+    img_file = st.camera_input("📸 Фото завдання")
+
+with col_audio:
+    audio_input = st.audio_input("🎤 Запитай голосом")
+
+if audio_input is not None:
+    audio_id = id(audio_input)
+    if audio_id != st.session_state.last_audio_id:
+        st.session_state.last_audio_id = audio_id
+        img = Image.open(img_file) if img_file else None
+        send_message(audio_bytes=audio_input.getvalue(), image=img)
+
+text_input = st.chat_input("💬 Напиши питання…")
+if text_input:
+    img = Image.open(img_file) if img_file else None
+    send_message(text=text_input, image=img)
