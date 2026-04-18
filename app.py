@@ -7,14 +7,13 @@ from PIL import Image
 import io
 
 # --- Инициализация клиента Groq ---
-# Убедитесь, что GROQ_KEY добавлен в Settings -> Secrets в Streamlit Cloud
 try:
     client = Groq(api_key=st.secrets["GROQ_KEY"])
 except Exception:
-    st.error("Ошибка: GROQ_KEY не найден в Secrets!")
+    st.error("Ошибка: Добавьте GROQ_KEY в Secrets!")
     st.stop()
 
-# --- Функция преобразования голоса в текст (Whisper) ---
+# --- Функция перевода голоса в текст (Whisper) ---
 def transcribe_audio(audio_bytes):
     try:
         audio_file = ("speech.wav", audio_bytes)
@@ -22,7 +21,7 @@ def transcribe_audio(audio_bytes):
             file=audio_file,
             model="whisper-large-v3-turbo", 
             response_format="text",
-            language="ru"  # Распознаем русскую речь
+            language="ru"
         )
         return transcription
     except Exception as e:
@@ -33,7 +32,7 @@ def analyze_image(image_bytes):
     try:
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
         completion = client.chat.completions.create(
-            model="llama-3.2-11b-vision-preview", # Модель со "зрением"
+            model="llama-3.2-11b-vision-preview",
             messages=[{
                 "role": "user",
                 "content": [
@@ -46,34 +45,49 @@ def analyze_image(image_bytes):
     except Exception as e:
         return f"Ошибка зрения: {e}"
 
-# --- Озвучка ответов (Женский голос) ---
-async def _tts(text):
-    # Используем приятный женский голос Svetlana
-    communicate = edge_tts.Communicate(text, "ru-RU-SvetlanaNeural")
-    data = b""
+# --- Улучшенная Озвучка (Живой женский голос) ---
+async def generate_audio_base64(text):
+    # Очистка текста от символов разметки, которые робот пытается прочитать
+    clean_text = text.replace('*', '').replace('#', '').replace('-', ' ').strip()
+    
+    # Настройки: rate="+20%" убирает медлительность, pitch="+2Hz" делает голос живее
+    communicate = edge_tts.Communicate(
+        clean_text, 
+        "ru-RU-SvetlanaNeural", 
+        rate="+25%", 
+        pitch="+2Hz"
+    )
+    
+    audio_data = b""
     async for chunk in communicate.stream():
-        if chunk["type"] == "audio": 
-            data += chunk["data"]
-    return data
+        if chunk["type"] == "audio":
+            audio_data += chunk["data"]
+    
+    if audio_data:
+        return base64.b64encode(audio_data).decode()
+    return None
 
 def speak(text):
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        audio_bytes = loop.run_until_complete(_tts(text))
-        loop.close()
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        b64_audio = new_loop.run_until_complete(generate_audio_base64(text))
+        new_loop.close()
         
-        b64 = base64.b64encode(audio_bytes).decode()
-        st.markdown(
-            f'<audio autoplay src="data:audio/mp3;base64,{b64}"></audio>', 
-            unsafe_allow_html=True
-        )
+        if b64_audio:
+            # Использование HTML компонента для более стабильного автозапуска в браузере
+            audio_html = f"""
+                <audio autoplay="true">
+                    <source src="data:audio/mp3;base64,{b64_audio}" type="audio/mp3">
+                </audio>
+            """
+            st.components.v1.html(audio_html, height=0)
     except:
         pass
 
-# --- Интерфейс приложения ---
-st.set_page_config(page_title="Smart Tutor", page_icon="🎓")
-st.title("🎓 Ваш репетитор (Groq Edition)")
+# --- Основной Интерфейс ---
+st.set_page_config(page_title="AI Tutor", page_icon="🎓")
+st.title("🎓 Ваш репетитор (Версия 3.0)")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -85,7 +99,7 @@ for m in st.session_state.messages:
 
 st.divider()
 
-# Панель ввода
+# Панель инструментов
 with st.container():
     col1, col2 = st.columns(2)
     with col1: 
@@ -93,46 +107,40 @@ with st.container():
     with col2: 
         audio_file = st.audio_input("🎤 Задать вопрос голосом")
     
-    u_text = st.chat_input("Или напишите сообщение здесь...")
+    u_text = st.chat_input("Или напишите вопрос здесь...")
 
-# --- Обработка ввода ---
+# --- Логика обработки ---
 if img_file or audio_file or u_text:
     final_query = ""
-    display_user_text = ""
+    display_text = ""
 
-    # 1. Обработка изображения
     if img_file:
-        with st.spinner("Считываю информацию с фото..."):
+        with st.spinner("Анализирую фото..."):
             img_desc = analyze_image(img_file.getvalue())
             final_query += f"\n[ЗАДАНИЕ НА ФОТО]: {img_desc}\n"
-            display_user_text += "📷 Отправлено фото задания. "
+            display_text += "📷 (Фото задания отправлено) "
 
-    # 2. Обработка голоса
     if audio_file:
-        with st.spinner("Распознаю ваш голос..."):
+        with st.spinner("Слушаю..."):
             voice_text = transcribe_audio(audio_file.getvalue())
             final_query += f"\n[ГОЛОСОВОЙ ВОПРОС]: {voice_text}"
-            display_user_text += f"🎤 Голос: {voice_text}"
-            # Синий блок для мгновенного контроля распознанного текста
+            display_text += f"🎤 Голос: {voice_text}"
             st.info(f"🎤 Распознано: {voice_text}")
 
-    # 3. Текстовый ввод
     if u_text:
         final_query += f"\n[ВОПРОС ТЕКСТОМ]: {u_text}"
-        display_user_text += u_text
+        display_text += u_text
 
     if final_query:
-        # Сохраняем "чистый" текст пользователя в историю
-        st.session_state.messages.append({"role": "user", "content": display_user_text})
+        st.session_state.messages.append({"role": "user", "content": display_text})
         
         with st.chat_message("assistant"):
-            with st.spinner("Учитель готовит ответ..."):
+            with st.spinner("Учитель думает..."):
                 try:
-                    # Основная модель для рассуждений
                     resp = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
                         messages=[
-                            {"role": "system", "content": "Ты терпеливый и добрый учитель. Объясняй задачи пошагово, доступным языком. Отвечай всегда на русском языке."},
+                            {"role": "system", "content": "Ты добрый и быстрый учитель. Объясняй кратко и понятно на русском языке. Не используй много спецсимволов."},
                             *st.session_state.messages,
                             {"role": "user", "content": final_query}
                         ]
@@ -141,7 +149,7 @@ if img_file or audio_file or u_text:
                     st.write(ans)
                     st.session_state.messages.append({"role": "assistant", "content": ans})
                     
-                    # Автоматическая озвучка ответа
+                    # Запуск озвучки
                     speak(ans)
                 except Exception as e:
-                    st.error(f"Произошла ошибка: {e}")
+                    st.error(f"Ошибка Groq: {e}")
