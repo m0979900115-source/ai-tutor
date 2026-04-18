@@ -5,57 +5,76 @@ import asyncio
 import base64
 from PIL import Image
 
-# 1. КОНФІГУРАЦІЯ (Тільки Gemini)
+# 1. Налаштування (використовуємо стабільну модель 1.5 Flash)
 try:
     genai.configure(api_key=st.secrets["GEMINI_KEY"])
+    model = genai.GenerativeModel(model_name="gemini-1.5-flash")
 except Exception:
-    st.error("Налаштуйте GEMINI_KEY у Secrets!")
+    st.error("Перевірте GEMINI_KEY у Secrets!")
     st.stop()
 
-model = genai.GenerativeModel('gemini-3-flash-preview')
-
-st.title("🎓 Твій надійний репетитор")
-
-# Функція для генерації голосу Microsoft Edge
-async def generate_voice(text):
-    # Голос 'uk-UA-OstapNeural' або 'uk-UA-PolinaNeural'
+# 2. Озвучка
+async def _tts(text):
     communicate = edge_tts.Communicate(text, "uk-UA-PolinaNeural")
-    audio_data = b""
+    data = b""
     async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            audio_data += chunk["data"]
-    return audio_data
+        if chunk["type"] == "audio": data += chunk["data"]
+    return data
 
-# 2. ВВІД
-img_file = st.camera_input("📸 Фото завдання")
-audio_question = st.audio_input("🎤 Запитай голосом")
-user_text = st.text_input("💬 Твоє питання")
+def speak(text):
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        audio_bytes = loop.run_until_complete(_tts(text))
+        b64 = base64.b64encode(audio_bytes).decode()
+        st.markdown(f'<audio autoplay src="data:audio/mp3;base64,{b64}"></audio>', unsafe_allow_html=True)
+    except: pass
 
-# 3. ЛОГІКА
-if img_file or audio_question or user_text:
-    with st.spinner('Репетитор готує відповідь...'):
+# 3. Стан чату
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+if "gemini_chat" not in st.session_state:
+    st.session_state.gemini_chat = model.start_chat(history=[])
+
+st.title("🎓 Репетитор (Версія 2.0)")
+
+# Відображення чату
+for m in st.session_state.chat_history:
+    with st.chat_message(m["role"]):
+        if m.get("image"): st.image(m["image"], width=200)
+        st.write(m["text"])
+
+st.divider()
+
+# ФОРМА — це важливо для зупинки циклів
+with st.container():
+    c1, c2 = st.columns(2)
+    with c1: img_file = st.camera_input("📸 Фото")
+    with c2: audio_file = st.audio_input("🎤 Голос")
+    
+    u_text = st.text_input("💬 Твій текст:")
+    btn = st.button("Надіслати вчителю 🚀")
+
+if btn:
+    content = []
+    if img_file: content.append(Image.open(img_file))
+    if u_text: content.append(u_text)
+    if audio_file: content.append({"mime_type": "audio/wav", "data": audio_file.getvalue()})
+
+    if content:
+        st.session_state.chat_history.append({"role": "user", "text": u_text or "[Запит]", "image": Image.open(img_file) if img_file else None})
+        
         try:
-            content = ["Ти професійний репетитор. Допомагай зрозуміти тему. Спілкуйся українською."]
-            if user_text: content.append(user_text)
-            if audio_question: content.append({"mime_type": "audio/wav", "data": audio_question.getvalue()})
-            if img_file: content.append(Image.open(img_file))
-            
-            response = model.generate_content(content)
-            answer = response.text
-            st.info(answer)
-            
-            # ОЗВУЧКА (Edge-TTS)
-            try:
-                audio_bytes = asyncio.run(generate_voice(answer))
-                audio_base64 = base64.b64encode(audio_bytes).decode()
-                audio_html = f"""
-                    <audio autoplay="true" controls style="width: 100%;">
-                        <source src="data:audio/mp3;base64,{audio_base64}" type="audio/mp3">
-                    </audio>
-                """
-                st.markdown(audio_html, unsafe_allow_html=True)
-            except Exception as e_voice:
-                st.warning("Голос тимчасово не зміг завантажитись.")
-                
+            with st.spinner("Думаю..."):
+                resp = st.session_state.gemini_chat.send_message(content)
+                st.session_state.chat_history.append({"role": "assistant", "text": resp.text})
+                st.rerun()
         except Exception as e:
-            st.error(f"Помилка: {str(e)}")
+            if "429" in str(e):
+                st.error("Google все ще блокує твій IP. Зачекай 1 годину або спробуй інший інтернет (наприклад, мобільний).")
+            else:
+                st.error(f"Помилка: {e}")
+
+# Озвучка останньої відповіді
+if st.session_state.chat_history and st.session_state.chat_history[-1]["role"] == "assistant":
+    speak(st.session_state.chat_history[-1]["text"])
