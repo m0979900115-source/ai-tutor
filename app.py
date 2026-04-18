@@ -41,7 +41,6 @@ async def _tts(text: str) -> bytes:
     return audio_data
 
 def speak(text: str) -> None:
-    """Рендерить аудіоплеєр з автовідтворенням."""
     try:
         audio_bytes = asyncio.get_event_loop().run_until_complete(_tts(text))
         b64 = base64.b64encode(audio_bytes).decode()
@@ -53,14 +52,13 @@ def speak(text: str) -> None:
     except Exception as e:
         st.warning(f"Голос недоступний: {e}")
 
-# ── Транскрибація аудіо через Gemini ─────────────────────────
+# ── Транскрибація через існуючу модель ─────────────────────────
 def transcribe(audio_bytes: bytes) -> str:
-    """Розпізнає мову з аудіо і повертає текст."""
     try:
-        transcribe_model = genai.GenerativeModel("gemini-3-flash-preview")
-        response = transcribe_model.generate_content([
+        # Передаємо сирі байти без ручного base64
+        response = model.generate_content([
             "Розпізнай мову і поверни лише текст без жодних пояснень.",
-            {"mime_type": "audio/wav", "data": base64.b64encode(audio_bytes).decode()},
+            {"mime_type": "audio/wav", "data": audio_bytes},
         ])
         return response.text.strip()
     except Exception as e:
@@ -78,41 +76,34 @@ if "last_audio_id" not in st.session_state:
 
 # ── Хелпер: відправити повідомлення ──────────────────────────
 def send_message(text: str = "", image=None, audio_bytes: bytes = None):
-    """Формує запит до Gemini, зберігає в історію, озвучує відповідь."""
     if not text and image is None and audio_bytes is None:
         return
 
-    # Транскрибуємо аудіо щоб показати учню його запитання
     display_text = text
     if audio_bytes and not text:
         with st.spinner("Розпізнаю голос…"):
             display_text = transcribe(audio_bytes)
 
-    # Зберегти повідомлення юзера для відображення
     st.session_state.messages.append({
         "role": "user",
         "text": display_text,
         "image": image,
     })
 
-    # Зібрати контент для Gemini (аудіо йде напряму для кращого розуміння)
+    # Збираємо контент правильно для SDK
     content = []
-    if text:
-        content.append(text)
+    if text: content.append(text)
+    if image: content.append(image)
     if audio_bytes:
-        content.append({
-            "mime_type": "audio/wav",
-            "data": base64.b64encode(audio_bytes).decode(),
-        })
-    if image:
-        content.append(image)
+        # SDK само закодує ці байти
+        content.append({"mime_type": "audio/wav", "data": audio_bytes})
 
     with st.spinner("Репетитор думає…"):
         try:
             response = st.session_state.chat.send_message(content)
             answer = response.text
         except Exception as e:
-            answer = f"Помилка: {e}"
+            answer = f"Виникла помилка: {e}"
 
     st.session_state.messages.append({
         "role": "assistant",
@@ -120,14 +111,12 @@ def send_message(text: str = "", image=None, audio_bytes: bytes = None):
         "image": None,
     })
 
-    # Зберігаємо відповідь для озвучення після rerun
     st.session_state.pending_voice = answer
     st.rerun()
 
 # ── UI ────────────────────────────────────────────────────────
 st.title("🎓 Твій репетитор")
 
-# Історія чату
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         if msg.get("image"):
@@ -135,15 +124,12 @@ for msg in st.session_state.messages:
         if msg.get("text"):
             st.markdown(msg["text"])
 
-# ── Голосова відповідь — одразу після історії, до елементів вводу ──
-# speak() має бути ПІСЛЯ рендеру повідомлень але ДО віджетів вводу
 if "pending_voice" in st.session_state:
+    # Використовуємо контейнер, щоб плеєр не "плив"
     with st.chat_message("assistant"):
         speak(st.session_state.pop("pending_voice"))
 
-# ── Ввід ──────────────────────────────────────────────────────
 st.divider()
-
 col_cam, col_audio = st.columns([1, 1])
 
 with col_cam:
@@ -152,15 +138,14 @@ with col_cam:
 with col_audio:
     audio_input = st.audio_input("🎤 Запитай голосом")
 
-# Автовідправка голосу — спрацьовує щойно з'являється новий запис
 if audio_input is not None:
     audio_id = id(audio_input)
     if audio_id != st.session_state.last_audio_id:
         st.session_state.last_audio_id = audio_id
+        # Безпечне відкриття фото
         image = Image.open(img_file) if img_file else None
         send_message(audio_bytes=audio_input.getvalue(), image=image)
 
-# Текстове поле — відправка по Enter
 text_input = st.chat_input("💬 Напиши питання…")
 if text_input:
     image = Image.open(img_file) if img_file else None
